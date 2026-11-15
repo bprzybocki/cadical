@@ -4,6 +4,15 @@ namespace CaDiCaL {
 
 /*------------------------------------------------------------------------*/
 
+vector<int> sorted_without_duplicates (const vector<int> &clause) {
+  vector<int> res = clause;
+  sort (res.begin (), res.end ());
+  res.erase (unique (res.begin (), res.end ()), res.end ());
+  return res;
+}
+
+/*------------------------------------------------------------------------*/
+
 bool parse_int_str (const char *val_str, int &val) {
   if (!strcmp (val_str, "true"))
     val = 1;

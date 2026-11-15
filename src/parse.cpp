@@ -257,6 +257,18 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) {
 
   // Now read body of DIMACS part.
   //
+  // Unlike 'p cnf <vars> <clauses>' the 'p inccnf' header does not give
+  // the number of clauses, which is needed to reserve the clause ids of
+  // the original clauses ('reserve_ids') before any clause is added.
+  // Otherwise clauses derived while adding original clauses (for instance
+  // after removing duplicated literals) get ids which clash with the ids
+  // of later original clauses, which breaks LRAT and VeriPB proofs.  Since
+  // the input can not be rewound (it might be '<stdin>' or a pipe), we
+  // buffer the literals of the clauses, count the clauses, reserve the ids
+  // and only then add the buffered clauses in the same order.
+  //
+  vector<int> inccnf_literals;
+  uint64_t inccnf_clauses = 0;
   int lit = 0;
   uint64_t parsed = 0;
   while ((ch = parse_char ()) != EOF) {
@@ -292,6 +304,12 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) {
       (void) start;
 #endif
     }
+    if (found_inccnf_header) {
+      inccnf_literals.push_back (lit);
+      if (!lit)
+        inccnf_clauses++;
+      continue;
+    }
     solver->add (lit);
     if (!found_inccnf_header && !lit && parsed++ >= clauses &&
         strict != FORCED)
@@ -303,6 +321,16 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) {
 
   if (!found_inccnf_header && parsed < clauses && strict != FORCED)
     PER ("clause missing");
+
+  if (found_inccnf_header) {
+    internal->reserve_ids (inccnf_clauses);
+    for (const auto &other : inccnf_literals) {
+      if (internal->terminated_asynchronously ())
+        return "parsing interrupted by signal";
+      solver->add (other);
+    }
+    erase_vector (inccnf_literals);
+  }
 
 #ifndef QUIET
   double end = internal->time ();

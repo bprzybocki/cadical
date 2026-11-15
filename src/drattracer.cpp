@@ -95,14 +95,79 @@ void DratTracer::add_derived_clause (int64_t, bool, int,
 #endif
 }
 
-void DratTracer::delete_clause (int64_t, bool, const vector<int> &clause) {
+void DratTracer::delete_clause (int64_t id, bool,
+                                const vector<int> &clause) {
   if (file->closed ())
     return;
+  if (weakened.erase (id)) {
+    LOG ("DRAT TRACER skipping deletion of weakened clause[%" PRId64 "]",
+         id);
+    return;
+  }
   LOG ("DRAT TRACER tracing deletion of clause");
   drat_delete_clause (clause);
 #ifndef QUIET
   deleted++;
 #endif
+}
+
+void DratTracer::weaken_minus (int64_t id, const vector<int> &) {
+  if (file->closed ())
+    return;
+  LOG ("DRAT TRACER remembering weakened clause[%" PRId64 "]", id);
+  weakened.insert (id);
+}
+
+void DratTracer::solve_query () { assumption_clauses.clear (); }
+
+// The negation of a core of failing assumptions is implied by the formula
+// and actually RUP.  It is traced since users (for instance the stand-alone
+// solver on incremental 'p inccnf' files) might add it (or a superset of
+// it) as original clause afterwards, which is then used in derivations.
+
+void DratTracer::add_assumption_clause (int64_t, const vector<int> &clause,
+                                        const vector<int64_t> &) {
+  if (file->closed ())
+    return;
+  LOG (clause, "DRAT TRACER tracing addition of assumption clause");
+  drat_add_clause (clause);
+#ifndef QUIET
+  added++;
+#endif
+  assumption_clauses.push_back (sorted_without_duplicates (clause));
+}
+
+// Original clauses are not traced in DRAT.  However, an original clause
+// added after a query which contains a traced assumption clause is traced
+// as derived (it is RUP) and the assumption clause is deleted, such that
+// the clauses known to the checker match those of the solver and a later
+// deletion of the original clause can not remove another identical clause.
+// It might be a strict superset since 'failed' reports all assumptions
+// mapped to the same internal literal, while the assumption clause only
+// contains one of them (for instance after 'compact' maps all fixed
+// variables to the same internal variable).
+
+void DratTracer::add_original_clause (int64_t, bool,
+                                      const vector<int> &clause,
+                                      bool restored) {
+  if (file->closed ())
+    return;
+  if (restored || assumption_clauses.empty ())
+    return;
+  const vector<int> sorted = sorted_without_duplicates (clause);
+  for (auto i = assumption_clauses.begin (); i != assumption_clauses.end ();
+       i++) {
+    if (!includes (sorted.begin (), sorted.end (), i->begin (), i->end ()))
+      continue;
+    LOG (clause, "DRAT TRACER tracing original clause as derived");
+    drat_add_clause (sorted);
+    drat_delete_clause (*i);
+#ifndef QUIET
+    added++, deleted++;
+#endif
+    assumption_clauses.erase (i);
+    return;
+  }
 }
 
 /*------------------------------------------------------------------------*/

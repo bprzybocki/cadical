@@ -138,11 +138,84 @@ void LratTracer::add_derived_clause (int64_t id, bool, int,
 void LratTracer::delete_clause (int64_t id, bool, const vector<int> &) {
   if (file->closed ())
     return;
+  if (weakened.erase (id)) {
+    LOG ("LRAT TRACER skipping deletion of weakened clause[%" PRId64 "]",
+         id);
+    return;
+  }
   LOG ("LRAT TRACER tracing deletion of clause");
   lrat_delete_clause (id);
 #ifndef QUIET
   deleted++;
 #endif
+}
+
+void LratTracer::weaken_minus (int64_t id, const vector<int> &) {
+  if (file->closed ())
+    return;
+  LOG ("LRAT TRACER remembering weakened clause[%" PRId64 "]", id);
+  weakened.insert (id);
+}
+
+void LratTracer::solve_query () { assumption_clauses.clear (); }
+
+// The negation of a core of failing assumptions is implied by the formula
+// and comes with antecedents.  It is traced since users (for instance the
+// stand-alone solver on incremental 'p inccnf' files) might add it as
+// original clause afterwards, which then gets a new identifier and is used
+// in later derivations (see 'add_original_clause' below).
+
+void LratTracer::add_assumption_clause (int64_t id,
+                                        const vector<int> &clause,
+                                        const vector<int64_t> &chain) {
+  if (file->closed ())
+    return;
+  LOG (clause, "LRAT TRACER tracing addition of assumption clause");
+  lrat_add_clause (id, clause, chain);
+#ifndef QUIET
+  added++;
+#endif
+  assumption_clauses.push_back ({sorted_without_duplicates (clause), id});
+}
+
+// Original clauses are not traced in LRAT.  Restored clauses keep their
+// identifier (their deletion was not traced).  An original clause added
+// after a query which contains a traced assumption clause however gets a
+// new identifier unknown to the checker.  It is traced (without duplicated
+// literals) as derived from the assumption clause, which is then deleted.
+// It might be a strict superset since 'failed' reports all assumptions
+// mapped to the same internal literal, while the assumption clause only
+// contains one of them (for instance after 'compact' maps all fixed
+// variables to the same internal variable).
+
+void LratTracer::add_original_clause (int64_t id, bool,
+                                      const vector<int> &clause,
+                                      bool restored) {
+  if (file->closed ())
+    return;
+  if (restored || assumption_clauses.empty ())
+    return;
+  // The user might have added duplicated literals (for instance cubes in
+  // 'p inccnf' files with duplicated literals), thus compare modulo those.
+  const vector<int> sorted = sorted_without_duplicates (clause);
+  for (auto i = assumption_clauses.begin (); i != assumption_clauses.end ();
+       i++) {
+    if (!includes (sorted.begin (), sorted.end (), i->first.begin (),
+                   i->first.end ()))
+      continue;
+    const int64_t assumption_id = i->second;
+    LOG (clause,
+         "LRAT TRACER tracing original clause[%" PRId64
+         "] as derived from assumption clause[%" PRId64 "]",
+         id, assumption_id);
+    lrat_add_clause (id, sorted, {assumption_id});
+    lrat_delete_clause (assumption_id);
+#ifndef QUIET
+    added++, deleted++;
+#endif
+    assumption_clauses.erase (i);
+    return;
+  }
 }
 
 void LratTracer::begin_proof (int64_t id) {

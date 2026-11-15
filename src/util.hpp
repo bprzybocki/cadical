@@ -38,6 +38,11 @@ bool has_prefix (const char *str, const char *prefix);
 
 bool parse_int_str (const char *str, int &);
 
+// Copy of a clause sorted and without duplicated literals (for instance to
+// compare clauses as sets of literals with 'std::includes').
+
+std::vector<int> sorted_without_duplicates (const std::vector<int> &);
+
 /*------------------------------------------------------------------------*/
 
 inline bool is_power_of_two (unsigned n) { return n && !(n & (n - 1)); }

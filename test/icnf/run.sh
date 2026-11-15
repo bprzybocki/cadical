@@ -79,6 +79,90 @@ run two2 10
 
 #--------------------------------------------------------------------------#
 
+# Checking DRAT and LRAT proofs of 'p inccnf' files where all cubes are
+# unsatisfiable and the last cube is empty, so the proof has to derive the
+# empty clause for the clauses part of the file, which is extracted as CNF.
+
+dratchecker=$CADICALBUILD/drat-trim
+lratchecker=$CADICALBUILD/lrat-trim
+
+for checker in drat lrat
+do
+  binary=$CADICALBUILD/$checker-trim
+  source=../test/cnf/$checker-trim.c
+  if [ ! -f $binary -o $source -nt $binary ]
+  then
+    cmd="cc -O -o $binary $source"
+    cecho "$cmd"
+    $cmd 2>/dev/null || die "compiling '$source' failed"
+  fi
+done
+
+proof () {
+  name=$1
+  shift
+  msg "running ICNF proof tests ${HILITE}'$name'${NORMAL}"
+  prefix=$CADICALBUILD/test-icnf-proof
+  icnf=../test/icnf/$name.icnf
+  cnf=$prefix-$name.cnf
+  # Extract the clauses (all lines except header, comments and cubes) as
+  # CNF in DIMACS format, with the maximum variable and number of clauses
+  # (terminating zeros) in the header, as needed by the proof checkers.
+  awk '
+    /^[pac]/ { next }
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i == 0) { clauses++; continue }
+        var = $i < 0 ? -$i : $i
+        if (var > maxvar) maxvar = var
+      }
+      body = body $0 "\n"
+    }
+    END { printf "p cnf %d %d\n%s", maxvar, clauses, body }
+  ' $icnf > $cnf
+  for format in drat lrat
+  do
+    prf=$prefix-$name.$format
+    log=$prefix-$name-$format.log
+    err=$prefix-$name-$format.err
+    chk=$prefix-$name-$format.chk
+    case $format in
+      drat) checker=$dratchecker; formatopts=""; expected=0;;
+      lrat) checker=$lratchecker; formatopts=" --lrat"; expected=20;;
+    esac
+    opts="$icnf $prf$formatopts $*"
+    cecho "$solver \\"
+    cecho "$opts"
+    cecho -n "# 20 ..."
+    "$solver" $opts 1>$log 2>$err
+    res=$?
+    if [ ! $res = 20 ]
+    then
+      cecho " ${BAD}FAILED${NORMAL} (actual exit code $res)"
+      failed=`expr $failed + 1`
+      continue
+    fi
+    cecho -n " ${GOOD}ok${NORMAL} ... checking $format proof"
+    $checker $cnf $prf 1>$chk 2>&1
+    res=$?
+    if [ ! $res = $expected ]
+    then
+      cecho " ${BAD}FAILED${NORMAL} (see '$chk')"
+      failed=`expr $failed + 1`
+    else
+      cecho " ${GOOD}ok${NORMAL}"
+      ok=`expr $ok + 1`
+    fi
+  done
+}
+
+proof proofrestore -P1 # restored clauses after elimination
+proof proofcore        # negated cores added by the stand-alone solver
+proof proofids         # clause identifiers reserved for 'p inccnf'
+proof proofcompact --compactint=1 --compactmin=1 --compactlim=0 # cores
+
+#--------------------------------------------------------------------------#
+
 [ $ok -gt 0 ] && OK="$GOOD"
 [ $failed -gt 0 ] && FAILED="$BAD"
 
